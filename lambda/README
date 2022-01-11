@@ -1,0 +1,10 @@
+Steps to create lambda function
+1. Create Lambda IAM Role
+2. Create s3 bucket
+3. Create lambda function and add trigger as s3
+4. Upload lambda.zip to the code
+5. Grant inbound rules for the security group for lambda -- Mysql for 3306 port
+6. Create RDS database and add theendpoint and credentials to the lambda_function.py file.
+7. Upload csv file in s3
+8. Check logs in CW
+9. Connect to MySQLWorkbench and check the table updated (Image attached)
