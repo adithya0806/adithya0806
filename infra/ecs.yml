@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ECS for factorial app
+Parameters:
+  EnvironmentName:
+    Default: app
+    Type: String
+  VpcID:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-0874101045f6300ac
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-0ab164fd7b1affced
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-0b4b0515fab05df2b
+Resources:
+  WebListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn:
+        Fn::ImportValue: !Sub ${EnvironmentName}:FactorialLoadBalancerListener
+      Priority: 100
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /*
+      Actions:
+        - TargetGroupArn: !Ref WebTargetGroup
+          Type: forward
+  
+  WebTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcID
+      Port: 80
+      Protocol: HTTP
+      Matcher:
+        HttpCode: 200-299
+      TargetType: ip
+      HealthCheckIntervalSeconds: 10
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: "60"
+
+  FactorialECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: AWSFactorial
+
+  FactorialECSService:
+    Type: AWS::ECS::Service
+    DependsOn: WebListenerRule
+    Properties:
+      Cluster: !Ref FactorialECSCluster
+      DesiredCount: 1
+      LaunchType: FARGATE
+      LoadBalancers:
+        - ContainerName: factorialapp
+          ContainerPort: 8080
+          TargetGroupArn: !Ref WebTargetGroup
+
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+          - !Ref PublicSubnet1
+          - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref ContainerSecurityGroup
+      ServiceName: !Sub aws-factorial-${EnvironmentName}
+      TaskDefinition: !Ref FactorialTaskDefinition
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 50
+  ContainerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcID
+      GroupDescription: Container sg
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ecs-tasks.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyName: FactorialAmazonECSTaskExecutionRolePolicy
+          PolicyDocument:
+            Statement:
+            - Effect: Allow
+              Action:
+                - 'ecr:GetAuthorizationToken'
+                - 'ecr:BatchCheckLayerAvailability'
+                - 'ecr:GetDownloadUrlForLayer'
+                - 'ecr:BatchGetImage'
+                - 'logs:CreateLogStream'
+                - 'logs:PutLogEvents'
+              Resource: '*'
+
+  CloudWatchLogsGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/ecs/factorial
+      RetentionInDays: 7
+
+  FactorialTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Cpu: "256"
+      Memory: "512"
+      ExecutionRoleArn: !Ref ECSTaskRole
+      Family: factorial
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ContainerDefinitions:
+        -
+          Name: factorialapp
+          Image: 470495562808.dkr.ecr.ap-south-1.amazonaws.com/factorial-app:latest
+          PortMappings:
+            - ContainerPort: 8080
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CloudWatchLogsGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: factorial
